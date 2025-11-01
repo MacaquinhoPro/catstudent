@@ -3,81 +3,31 @@ import {
   ApolloClient,
   InMemoryCache,
   ApolloProvider,
-  ApolloLink,
-  from,
+  HttpLink,
   gql,
-  useLazyQuery,
+  useApolloClient,
 } from "@apollo/client";
-import { RestLink } from "apollo-link-rest";
-import { makeExecutableSchema } from "@graphql-tools/schema";
-import { SchemaLink } from "@apollo/client/link/schema";
 
 /* ============================================================
-   APOLLO: CAT API (REST via @rest) + STUDENTS (SchemaLink local)
+   CONFIG
    ============================================================ */
+const API_URL = "https://cats-students-api.vercel.app/api/graphql";
 
-const CAT_API_KEY =
-  "live_UiTHW0pEyWvmlHCs06sqnr3UazV3Fdf8I3qasOkOGVkumI0DZrWovno4DQssBS7J";
-
-// A) RestLink para The Cat API
-const restLink = new RestLink({
-  uri: "https://api.thecatapi.com/v1",
-  headers: { "x-api-key": CAT_API_KEY },
-});
-
-// B) Schema local in-memory para Students
-const typeDefs = /* GraphQL */ `
-  type Student {
-    id: ID!
-    name: String!
-    age: Int!
-    program: String!
-    gpa: Float!
-    email: String!
-  }
-
-  type Query {
-    students: [Student!]!
-  }
-`;
-
-const STUDENTS_DB = [
-  { id: "1", name: "María López", age: 20, program: "Comunicación", gpa: 4.3, email: "maria.lopez@example.com" },
-  { id: "2", name: "Juan Restrepo", age: 22, program: "Ing. Informática", gpa: 4.1, email: "juan.restrepo@example.com" },
-  { id: "3", name: "Nicolás Urrea", age: 21, program: "Diseño", gpa: 3.9, email: "nicolas.urrea@example.com" },
-  { id: "4", name: "Samuel Acero", age: 23, program: "Administración", gpa: 4.5, email: "samuel.acero@example.com" },
-];
-
-const resolvers = {
-  Query: { students: () => STUDENTS_DB },
-};
-
-const studentsSchema = makeExecutableSchema({ typeDefs, resolvers });
-const schemaLink = new SchemaLink({ schema: studentsSchema });
-
-// C) Split: si el contexto trae useRest=true => restLink; si no => schemaLink
-const splitLink = ApolloLink.split(
-  (operation) => operation.getContext().useRest === true,
-  restLink,
-  schemaLink
-);
-
-const client = new ApolloClient({
-  link: from([splitLink]),
+const apolloClient = new ApolloClient({
+  link: new HttpLink({ uri: API_URL, fetch }),
   cache: new InMemoryCache(),
 });
 
 /* ============================================================
    UI HELPERS
    ============================================================ */
-
 const Shell = ({ children }) => (
   <div className="min-h-screen bg-slate-900 text-white">
     <header className="sticky top-0 z-10 backdrop-blur supports-[backdrop-filter]:bg-slate-900/70 bg-slate-900/90 border-b border-white/10">
       <div className="max-w-7xl mx-auto px-6 py-4">
-        <h1 className="text-xl md:text-2xl font-bold">GraphQL · The Cat API + Students</h1>
+        <h1 className="text-xl md:text-2xl font-bold">Cats (by Breed) + Students · GraphQL Client</h1>
         <p className="text-xs md:text-sm opacity-70">
-          Dos secciones: selecciona campos, ejecuta y revisa el request body a la derecha.
+          Nada cambia hasta presionar <strong>“Consultar”</strong>. Los campos/params solo se aplican al ejecutar.
         </p>
       </div>
     </header>
@@ -103,11 +53,11 @@ const Panel = ({ title, subtitle, actions, left, right, aside }) => (
           </div>
         </div>
       </div>
-
       <div className="xl:col-span-4">
         <div className="rounded-2xl border border-white/10 bg-white/5 shadow-lg">
           <div className="p-4 border-b border-white/10">
-            <h3 className="font-medium">Request body</h3>
+            <h3 className="font-medium">Request body (pendiente)</h3>
+            <p className="text-xs opacity-60">Esto es lo que se enviará al presionar “Consultar”.</p>
           </div>
           <div className="p-4">{aside}</div>
         </div>
@@ -144,6 +94,9 @@ const Pill = ({ children }) => (
   </span>
 );
 
+/* ============================================================
+   UTIL
+   ============================================================ */
 function buildSelection(fields) {
   const safe = Array.isArray(fields) ? fields : [];
   const body = safe.map((f) => {
@@ -154,14 +107,8 @@ function buildSelection(fields) {
   return body.length ? body.join("\n") : "id";
 }
 
-function maskKey(k) {
-  if (!k) return k;
-  if (k.length <= 10) return "•••";
-  return k.slice(0, 6) + "•••" + k.slice(-4);
-}
-
 /* ============================================================
-   SECCIÓN 1: THE CAT API (GraphQL sobre REST)
+   SECCIÓN 1: GATOS (con estado PENDIENTE vs APLICADO)
    ============================================================ */
 
 const CAT_FIELDS = [
@@ -175,23 +122,15 @@ const CAT_FIELDS = [
 
 function CatCard({ item, selected }) {
   const has = (k) => selected.includes(k);
-
   return (
     <div className="border border-white/10 rounded-xl p-3">
-      {/* Imagen solo si el usuario seleccionó url */}
       {has("url") && item.url ? (
-        <img
-          src={item.url}
-          alt={item.id || "cat"}
-          className="w-full h-44 object-cover rounded-lg mb-3"
-        />
+        <img src={item.url} alt={item.id || "cat"} className="w-full h-44 object-cover rounded-lg mb-3" />
       ) : (
         <div className="w-full h-44 rounded-lg bg-white/5 grid place-items-center mb-3 text-xs opacity-70">
           Imagen no seleccionada
         </div>
       )}
-
-      {/* Pills con los campos seleccionados */}
       <div className="flex flex-wrap">
         {has("id") && item.id && <Pill>ID: {item.id}</Pill>}
         {has("width") && item.width != null && <Pill>Width: {item.width}</Pill>}
@@ -208,96 +147,155 @@ function CatCard({ item, selected }) {
 }
 
 function CatSection() {
-  const [selected, setSelected] = useState(["id", "url"]);
-  const [limit, setLimit] = useState(3);
+  const client = useApolloClient();
 
-  // Construcción de query y de request body (REST) — se actualiza con checkboxes y límite.
-  const { queryDoc, variables, requestBody } = useMemo(() => {
-    const selection = buildSelection(selected);
-    const text = `
-      query CatImages($limit: Int!) {
-        catImages(limit: $limit)
-          @rest(type: "CatImage", path: "/images/search?limit={args.limit}") {
+  // ====== PENDIENTE (UI) — NO afecta lo que se muestra hasta aplicar
+  const [pendingSelected, setPendingSelected] = useState(["id", "url", "breeds"]);
+  const [pendingBreedId, setPendingBreedId] = useState("");
+  const [pendingLimit, setPendingLimit] = useState(3);
+
+  // ====== APLICADO (lo que se usó en última consulta) — SOLO esto renderiza
+  const [appliedSelected, setAppliedSelected] = useState(["id", "url", "breeds"]);
+  const [appliedBreedId, setAppliedBreedId] = useState("");
+  const [appliedLimit, setAppliedLimit] = useState(3);
+
+  // ====== Resultados de la última ejecución
+  const [catData, setCatData] = useState(null);
+  const [catLoading, setCatLoading] = useState(false);
+  const [catError, setCatError] = useState(null);
+
+  // Body PENDIENTE (lo que se enviará al presionar)
+  const { queryTextPending, variablesPending, requestBody } = useMemo(() => {
+    const selection = buildSelection(pendingSelected);
+    const useBreed = Boolean(pendingBreedId && String(pendingBreedId).trim().length > 0);
+    const textWithBreed = `
+      query CatImages($limit: Int!, $breedId: ID!) {
+        catImages(limit: $limit, breedId: $breedId) {
           ${selection}
         }
       }
     `;
-    const vars = { limit: Math.max(1, Math.min(20, Number(limit) || 1)) };
+    const textNoBreed = `
+      query CatImages($limit: Int!) {
+        catImages(limit: $limit) {
+          ${selection}
+        }
+      }
+    `;
+    const vars = useBreed
+      ? { limit: Math.max(1, Math.min(20, Number(pendingLimit) || 1)), breedId: String(pendingBreedId).trim() }
+      : { limit: Math.max(1, Math.min(20, Number(pendingLimit) || 1)) };
 
-    // Nota: TheCatAPI es GET. El cuerpo "real" no lleva selección,
-    // pero mostramos un body descriptivo que incluye params y los campos seleccionados
-    // (útil para entender qué se está pidiendo desde la UI).
-    const body = {
-      method: "GET",
-      url: `https://api.thecatapi.com/v1/images/search`,
-      headers: { "x-api-key": maskKey(CAT_API_KEY) },
-      params: { limit: vars.limit },
-      selectedFields: selected, // <- cambia al marcar/desmarcar
-      payload: null,
-    };
-
+    const text = (useBreed ? textWithBreed : textNoBreed).trim();
     return {
-      queryDoc: gql(text),
-      variables: vars,
-      requestBody: body,
+      queryTextPending: text,
+      variablesPending: vars,
+      requestBody: {
+        method: "POST",
+        url: API_URL,
+        headers: { "content-type": "application/json" },
+        payload: {
+          operationName: "CatImages",
+          variables: vars,
+          query: text,
+        },
+      },
     };
-  }, [selected, limit]);
+  }, [pendingSelected, pendingBreedId, pendingLimit]);
 
-  const [runQuery, { data, loading, error }] = useLazyQuery(queryDoc, {
-    context: { useRest: true },
-  });
+  // Ejecutar y APLICAR
+  const runCats = async () => {
+    setCatLoading(true);
+    setCatError(null);
+    try {
+      const result = await client.query({
+        query: gql(queryTextPending),
+        variables: variablesPending,
+        fetchPolicy: "no-cache",
+      });
+      setCatData(result.data);
 
-  const toggle = (key, val) =>
-    setSelected((prev) => (val ? [...new Set([...prev, key])] : prev.filter((k) => k !== key)));
+      // APLICAR estados (congelar lo que se muestra)
+      setAppliedSelected(pendingSelected);
+      setAppliedBreedId(pendingBreedId);
+      setAppliedLimit(variablesPending.limit);
+    } catch (e) {
+      setCatError(e);
+    } finally {
+      setCatLoading(false);
+    }
+  };
+
+  const togglePending = (key, val) =>
+    setPendingSelected((prev) => (val ? [...new Set([...prev, key])] : prev.filter((k) => k !== key)));
 
   const left = (
     <>
-      <p className="text-sm opacity-80 mb-2">Campos disponibles</p>
+      <div className="space-y-3">
+        <div>
+          <label className="text-sm opacity-80">Breed ID (opcional):</label>
+          <input
+            type="text"
+            className="mt-1 block w-full px-3 py-2 rounded-lg bg-white/10 border border-white/20"
+            placeholder="ej: abys"
+            value={pendingBreedId}
+            onChange={(e) => setPendingBreedId(e.target.value)}
+          />
+          <p className="text-xs opacity-60 mt-1">Vacío = consulta sin <code>breedId</code>.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-sm opacity-80"># resultados:</label>
+          <input
+            type="number"
+            min={1}
+            max={20}
+            className="px-3 py-2 rounded-lg bg-white/10 border border-white/20 w-24"
+            value={pendingLimit}
+            onChange={(e) => setPendingLimit(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <p className="text-sm opacity-80 mt-4 mb-2">Campos fijos (elige cuáles mostrar):</p>
       <FieldGrid>
         {CAT_FIELDS.map((f) => (
           <Checkbox
             key={f.key}
             label={f.label}
-            checked={selected.includes(f.key)}
-            onChange={(v) => toggle(f.key, v)}
+            checked={pendingSelected.includes(f.key)}
+            onChange={(v) => togglePending(f.key, v)}
           />
         ))}
       </FieldGrid>
-
-      <div className="mt-4 flex items-center gap-2">
-        <label className="text-sm opacity-80"># resultados:</label>
-        <input
-          type="number"
-          min={1}
-          max={20}
-          className="px-3 py-2 rounded-lg bg-white/10 border border-white/20 w-24"
-          value={limit}
-          onChange={(e) => setLimit(e.target.value)}
-        />
-      </div>
+      <p className="text-xs opacity-60 mt-2">Lo seleccionado aquí no se aplica hasta presionar “Consultar”.</p>
     </>
   );
 
   const right = (
     <>
-      <p className="text-sm opacity-80 mb-2">Resultados</p>
-      {loading && <p className="text-sm opacity-80">Consultando…</p>}
-      {error && <p className="text-sm text-red-300">Error: {error.message}</p>}
-      {data?.catImages?.length ? (
+      <p className="text-sm opacity-80 mb-2">Resultados (última ejecución aplicada)</p>
+      <div className="text-xs opacity-60 mb-2">
+        <span className="mr-3">Campos aplicados: {appliedSelected.join(", ") || "—"}</span>
+        <span className="mr-3">breedId: {appliedBreedId || "—"}</span>
+        <span>limit: {appliedLimit}</span>
+      </div>
+      {catLoading && <p className="text-sm opacity-80">Consultando…</p>}
+      {catError && <p className="text-sm text-red-300">Error: {catError.message}</p>}
+      {catData?.catImages?.length ? (
         <div className="grid sm:grid-cols-2 gap-3">
-          {data.catImages.map((img, i) => (
-            <CatCard key={i} item={img} selected={selected} />
+          {catData.catImages.map((img, i) => (
+            <CatCard key={i} item={img} selected={appliedSelected} />
           ))}
         </div>
       ) : (
-        !loading && <p className="text-sm opacity-70">Aún no hay resultados.</p>
+        !catLoading && <p className="text-sm opacity-70">Aún no hay resultados.</p>
       )}
     </>
   );
 
   const aside = (
     <>
-      <p className="text-xs mb-2 opacity-70">HTTP request (REST)</p>
+      <p className="text-xs mb-2 opacity-70">HTTP request body (pendiente)</p>
       <CodeBlock>{JSON.stringify(requestBody, null, 2)}</CodeBlock>
     </>
   );
@@ -305,7 +303,7 @@ function CatSection() {
   const actions = (
     <button
       className="px-4 py-2 rounded-xl bg-white/90 text-black font-medium hover:bg-white"
-      onClick={() => runQuery({ variables })}
+      onClick={runCats}
     >
       Consultar
     </button>
@@ -313,8 +311,8 @@ function CatSection() {
 
   return (
     <Panel
-      title="The Cat API (GraphQL @rest)"
-      subtitle="Selecciona datos y ejecuta. A la derecha: el cuerpo de la request (con params y campos seleccionados)."
+      title="Gatos por raza (breedId)"
+      subtitle="La consulta y la aplicación de campos suceden solo al presionar el botón."
       actions={actions}
       left={left}
       right={right}
@@ -324,7 +322,7 @@ function CatSection() {
 }
 
 /* ============================================================
-   SECCIÓN 2: STUDENTS (GraphQL local)
+   SECCIÓN 2: ESTUDIANTES (con estado PENDIENTE vs APLICADO)
    ============================================================ */
 
 const STUDENT_FIELDS = [
@@ -337,68 +335,104 @@ const STUDENT_FIELDS = [
 ];
 
 function StudentsSection() {
-  const [selected, setSelected] = useState(["id", "name", "program", "gpa"]);
+  const client = useApolloClient();
 
-  const { queryDoc, bodyPreview } = useMemo(() => {
-    const selection = buildSelection(selected);
+  // PENDIENTE (UI)
+  const [pendingSelected, setPendingSelected] = useState(["id", "name", "program", "gpa"]);
+  // APLICADO (render)
+  const [appliedSelected, setAppliedSelected] = useState(["id", "name", "program", "gpa"]);
+
+  // Resultados de última ejecución
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  // Query fijo (siempre todos)
+  const { queryText, requestBody } = useMemo(() => {
     const text = `
       query AllStudents {
         students {
-          ${selection}
+          id
+          name
+          age
+          program
+          gpa
+          email
         }
       }
-    `;
-    // Body típico de request GraphQL (para referencia visual del "body")
-    const body = {
-      method: "POST",
-      url: "/graphql",
-      headers: { "content-type": "application/json" },
-      payload: {
-        operationName: "AllStudents",
-        variables: {},
-        query: text.trim(),
+    `.trim();
+
+    return {
+      queryText: text,
+      requestBody: {
+        method: "POST",
+        url: API_URL,
+        headers: { "content-type": "application/json" },
+        payload: {
+          operationName: "AllStudents",
+          variables: {},
+          query: text,
+        },
       },
     };
-    return {
-      queryDoc: gql(text),
-      bodyPreview: body,
-    };
-  }, [selected]);
+  }, []);
 
-  const [runQuery, { data, loading, error }] = useLazyQuery(queryDoc);
+  const runStudents = async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const result = await client.query({
+        query: gql(queryText),
+        variables: {},
+        fetchPolicy: "no-cache",
+      });
+      setData(result.data);
 
-  const toggle = (key, val) =>
-    setSelected((prev) => (val ? [...new Set([...prev, key])] : prev.filter((k) => k !== key)));
+      // APLICAR columnas para render
+      setAppliedSelected(pendingSelected);
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const togglePending = (key, val) =>
+    setPendingSelected((prev) => (val ? [...new Set([...prev, key])] : prev.filter((k) => k !== key)));
 
   const students = data?.students || [];
 
   const left = (
     <>
-      <p className="text-sm opacity-80 mb-2">Campos disponibles</p>
+      <p className="text-sm opacity-80 mb-2">Campos fijos (elige cuáles mostrar en la tabla):</p>
       <FieldGrid>
         {STUDENT_FIELDS.map((f) => (
           <Checkbox
             key={f.key}
             label={f.label}
-            checked={selected.includes(f.key)}
-            onChange={(v) => toggle(f.key, v)}
+            checked={pendingSelected.includes(f.key)}
+            onChange={(v) => togglePending(f.key, v)}
           />
         ))}
       </FieldGrid>
+      <p className="text-xs opacity-60 mt-2">Lo seleccionado aquí no se aplica hasta presionar “Consultar”.</p>
     </>
   );
 
   const right = (
     <>
-      <p className="text-sm opacity-80 mb-2">Resultado</p>
+      <p className="text-sm opacity-80 mb-2">Resultado (última ejecución aplicada)</p>
+      <div className="text-xs opacity-60 mb-2">
+        <span>Columnas aplicadas: {appliedSelected.join(", ") || "—"}</span>
+      </div>
       {loading && <p className="text-sm opacity-80">Consultando…</p>}
-      {error && <p className="text-sm text-red-300">Error: {error.message}</p>}
+      {err && <p className="text-sm text-red-300">Error: {err.message}</p>}
       {students.length ? (
         <div className="overflow-auto border border-white/10 rounded-xl">
           <table className="w-full text-sm">
             <thead className="bg-white/10">
               <tr>
-                {selected.map((c) => (
+                {appliedSelected.map((c) => (
                   <th key={c} className="text-left font-semibold px-3 py-2 capitalize">
                     {c}
                   </th>
@@ -408,7 +442,7 @@ function StudentsSection() {
             <tbody>
               {students.map((s) => (
                 <tr key={s.id} className="odd:bg-white/5">
-                  {selected.map((c) => (
+                  {appliedSelected.map((c) => (
                     <td key={c} className="px-3 py-2 align-top">
                       {typeof s[c] === "object" ? JSON.stringify(s[c]) : String(s[c] ?? "")}
                     </td>
@@ -426,15 +460,15 @@ function StudentsSection() {
 
   const aside = (
     <>
-      <p className="text-xs mb-2 opacity-70">GraphQL request body (referencial)</p>
-      <CodeBlock>{JSON.stringify(bodyPreview, null, 2)}</CodeBlock>
+      <p className="text-xs mb-2 opacity-70">HTTP request body (pendiente)</p>
+      <CodeBlock>{JSON.stringify(requestBody, null, 2)}</CodeBlock>
     </>
   );
 
   const actions = (
     <button
       className="px-4 py-2 rounded-xl bg-white/90 text-black font-medium hover:bg-white"
-      onClick={() => runQuery()}
+      onClick={runStudents}
     >
       Consultar
     </button>
@@ -442,8 +476,8 @@ function StudentsSection() {
 
   return (
     <Panel
-      title="Students (SchemaLink local)"
-      subtitle="Selecciona columnas. A la derecha: body típico de GraphQL actualizado según tu selección."
+      title="Estudiantes (todos)"
+      subtitle="La consulta y la aplicación de columnas suceden solo al presionar el botón."
       actions={actions}
       left={left}
       right={right}
@@ -455,10 +489,9 @@ function StudentsSection() {
 /* ============================================================
    APP
    ============================================================ */
-
 export default function App() {
   return (
-    <ApolloProvider client={client}>
+    <ApolloProvider client={apolloClient}>
       <Shell>
         <CatSection />
         <StudentsSection />
